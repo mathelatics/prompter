@@ -5,6 +5,7 @@
  * cp_track_poll() drains from the UI thread. All locks are try/avoid where
  * possible so a slow ASR never blocks audio capture. */
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE               /* usleep() under glibc strict c11 */
 #include "track.h"
 
 #include <math.h>
@@ -71,7 +72,8 @@ static void q_push(cp_track *t, const char *w) {
     t->qn++;
 }
 
-/* split transcript on spaces/newlines, strip leading punctuation */
+#ifdef CP_HAVE_WHISPER
+/* split transcript on spaces/newlines, strip surrounding whitespace */
 static void q_push_transcript(cp_track *t, const char *text) {
     const char *p = text;
     while (*p) {
@@ -88,7 +90,6 @@ static void q_push_transcript(cp_track *t, const char *text) {
     }
 }
 
-#ifdef CP_HAVE_WHISPER
 /* run whisper full on `pcm` (mono float @16k). Appends tokens to queue. */
 static void whisper_run_chunk(cp_track *t, const float *pcm, size_t n) {
     if (!t->wctx || n < (size_t)(CP_AUDIO_RATE * 0.3)) return;
@@ -203,7 +204,10 @@ size_t cp_track_poll(cp_track *t, const char **out, size_t max) {
     size_t got = 0;
 
     if (t->p.backend == CP_TRACK_MOCK) {
-        /* emit words at mock_wps based on wall clock */
+        /* emit words at mock_wps based on wall clock. The UI thread polls
+         * every frame (~60Hz), so we must lock around the cursor state —
+         * flush() also takes this mutex. */
+        pthread_mutex_lock(&t->mu);
         double now = mono_now();
         double wps = t->p.mock_wps > 0 ? t->p.mock_wps : 2.5;
         while (t->p.mock_words && t->p.mock_words[t->mock_i] && got < max) {
@@ -211,6 +215,7 @@ size_t cp_track_poll(cp_track *t, const char **out, size_t max) {
             out[got++] = t->p.mock_words[t->mock_i++];
             t->mock_next += 1.0 / wps;
         }
+        pthread_mutex_unlock(&t->mu);
         return got;
     }
 

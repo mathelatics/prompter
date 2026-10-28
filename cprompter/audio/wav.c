@@ -45,11 +45,12 @@ typedef struct {
     float   *pcm;           /* mono float @ original rate             */
 } wavfile;
 
+#ifdef CP_WAV_MAIN
 static uint32_t rd32(const unsigned char *p) { return p[0]|p[1]<<8|p[2]<<16|(uint32_t)p[3]<<24; }
 static uint16_t rd16(const unsigned char *p) { return p[0]|p[1]<<8; }
 
+/* wav_read is only used by the offline CLI smoke test below */
 static int wav_read(const char *path, wavfile *o) {
-    (void)path; (void)o;   /* used only under CP_WAV_MAIN builds */
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
     fseek(f, 0, SEEK_END); long flen = ftell(f); fseek(f, 0, SEEK_SET);
@@ -97,6 +98,7 @@ done:
     free(buf);
     return rc;
 }
+#endif /* CP_WAV_MAIN */
 
 /* CLI: ./wavtest in.wav -> prints detected speech segments via VAD,
  * and WPM estimate. Used by `make test` as a synthetic-speech smoke test. */

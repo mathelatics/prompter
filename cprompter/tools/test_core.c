@@ -8,6 +8,8 @@
 #include "../core/script.h"
 #include "../core/pacer.h"
 #include "../format/script_io.h"
+#include "../audio/align.h"
+#include "../audio/track.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond) do { checks++; if (!(cond)) { \
@@ -150,11 +152,102 @@ static void test_textream_roundtrip(void) {
     cp_script_free(s); cp_script_free(r);
 }
 
+/* ---- M2: word aligner --------------------------------------------------- */
+static void test_align_basic(void) {
+    cp_script *s = cp_script_new();
+    cp_script_load_text(s, "the quick brown fox jumps over the lazy dog", 1);
+    cp_align *a = cp_align_new(s);
+
+    /* exact in-order speech advances one word per recognized token */
+    const char *say[] = {"The", "quick,", "brown", "fox"};
+    for (int i = 0; i < 4; i++) {
+        cp_align_result r = cp_align_feed(a, say[i]);
+        CHECK(r.matched == 1);
+        CHECK(cp_align_pos(a) == (size_t)(i + 1));
+    }
+
+    /* fillers are dropped silently */
+    cp_align_result rf = cp_align_feed(a, "um");
+    CHECK(rf.filler_skipped == 1 && rf.matched == 0);
+    CHECK(cp_align_pos(a) == 4);
+
+    /* skipped words: speaker rushed past "jumps over" -> forward search finds "the" */
+    cp_align_result rs = cp_align_feed(a, "the");
+    CHECK(rs.matched == 1);
+    CHECK(cp_align_pos(a) == 7);          /* jumped ahead to second "the" */
+
+    /* re-read: go back to "lazy" (within AL_MAX_BACK window) */
+    cp_align_result rb = cp_align_feed(a, "lazy");
+    CHECK(rb.matched == 1);
+    CHECK(cp_align_pos(a) == 8);
+
+    /* garbage streak raises drift after AL_GIVEUP misses */
+    cp_align_reset(a, 0);
+    for (int i = 0; i < 31; i++) cp_align_feed(a, "zzzqx");
+    CHECK(cp_align_drift(a) >= 30);
+    CHECK(cp_align_pos(a) == 0);          /* never advanced on pure noise */
+
+    /* fuzzy match: typo within edit distance 1 still tracks */
+    cp_align_reset(a, 0);
+    cp_align_feed(a, "teh");              /* ~ "the" */
+    CHECK(cp_align_pos(a) == 1);
+    cp_align_free(a); cp_script_free(s);
+}
+
+/* helpers exposed by align.c — verify directly too */
+static void test_align_helpers(void) {
+    char buf[64];
+    CHECK(cp_norm_word("Hello,", buf, sizeof buf) == 1);
+    CHECK(strcmp(buf, "hello") == 0);
+    CHECK(cp_is_filler("uh"));
+    CHECK(!cp_is_filler("cat"));
+    CHECK(cp_fuzzy_eq("color", "colour"));       /* Levenshtein 1 */
+    CHECK(cp_fuzzy_eq("teleprompter", "telepromp")); /* prefix>=4 */
+    CHECK(!cp_fuzzy_eq("cat", "dog"));
+}
+
+/* ---- M2: mock ASR backend -> pacer pipeline ------------------------------ */
+static void test_track_mock_pipeline(void) {
+    static const char *stream[] = {"the", "quick", "brown", "fox", NULL};
+    cp_track_params tp; memset(&tp, 0, sizeof tp);
+    tp.backend   = CP_TRACK_MOCK;
+    tp.mock_words = stream;
+    tp.mock_wps   = 50.0;                    /* fast feed for the test */
+    char err[128];
+    cp_track *t = cp_track_open(&tp, err, sizeof err);
+    CHECK(t != NULL);
+
+    cp_script *s = cp_script_new();
+    cp_script_load_text(s, "the quick brown fox jumps over the lazy dog", 1);
+    s->default_mode = CP_MODE_TRACK;
+    cp_pacer p; cp_pacer_init(&p, s, 2.0);
+    cp_align *a = cp_align_new(s);
+
+    const char *words[16]; int total = 0; double now = 0;
+    for (int iter = 0; iter < 200 && total < 4; iter++) {
+        size_t n = cp_track_poll(t, words, 16);
+        for (size_t i = 0; i < n; i++) {
+            cp_pacer_feed_align(&p, (double)cp_align_feed(a, words[i]).script_idx);
+            total++;
+        }
+        now += 0.05; cp_pacer_tick(&p, now, 0.05);
+    }
+    CHECK(total == 4);                       /* all mock words drained */
+    CHECK(cp_align_pos(a) == 4);             /* aligned at "jumps" boundary */
+    CHECK(p.track_target == 4.0);
+    for (int i = 0; i < 200; i++) { now += 0.05; cp_pacer_tick(&p, now, 0.05); }
+    CHECK(p.pos >= 3.9);                     /* display eased onto target */
+    cp_align_free(a); cp_script_free(s); cp_track_close(t);
+}
+
 int main(void) {
     test_tokenizer();
     test_pacer_classic();
     test_pacer_voice_track();
     test_textream_roundtrip();
+    test_align_basic();
+    test_align_helpers();
+    test_track_mock_pipeline();
     printf("%d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
 }

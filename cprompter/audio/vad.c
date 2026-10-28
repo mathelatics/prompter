@@ -124,7 +124,8 @@ float cp_vad_rms(const cp_vad *v)      { return v->last_rms; }
 float cp_vad_thresh(const cp_vad *v)   { return v->nf * 2.5f / (1.0f + v->sens * 0.25f); }
 
 void cp_vad_set_sensitivity(cp_vad *v, float s) {
-    if (s < -2) s = -2; if (s > 2) s = 2;
+    if (s < -2) s = -2;
+    if (s > 2)  s = 2;
     v->sens = s;
 }
 
