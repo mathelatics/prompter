@@ -5,6 +5,7 @@
 #include "pacer.h"
 
 #include <math.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,7 +101,10 @@ void cp_pacer_feed_vad(cp_pacer *p, int active, double inst_wpm) {
 void cp_pacer_feed_align(cp_pacer *p, double aligned_pos) {
     /* Word-tracking is authoritative: unlike VAD mode we DO allow small
      * backward moves (stutters/re-reads align.c resolves) but never below
-     * floor(max_delivered)-AL_BACK_CAP so we don't rewind whole paragraphs. */
+     * floor(max_delivered)-AL_BACK_CAP so we don't rewind whole paragraphs.
+     * The current track_target itself counts as "recently shown", which is
+     * what lets a stutter re-read the last few words without rewinding the
+     * whole paragraph (align.c emits raw cursor positions; M2 audit §4.1). */
     if (aligned_pos >= p->track_target) {          /* forward: always ok   */
         p->track_target = aligned_pos;
     } else {
@@ -134,6 +138,7 @@ size_t cp_pacer_word_index(const cp_pacer *p) {
  * of raw starting at word n's byte offset. Words are joined with single
  * spaces so any equivalent whitespace spelling collapses to one canon. */
 static char *serialize_upto(const cp_script *s, size_t n) {
+
     if (!s || !s->raw) return NULL;
     size_t cap = 0;
     for (size_t i = 0; i < n && i < s->nw; i++) cap += s->words[i].n + 1;
@@ -166,6 +171,44 @@ size_t cp_script_chars_for_words(const cp_script *s, double words) {
     return (size_t)(w->text - s->raw) + w->n;   /* end offset of nth word */
 }
 
+/* ---- canonical word-prefix compare -------------------------------------
+ * The read-lock must survive benign reformatting (director web UI collapses
+ * newlines into spaces, editors re-wrap paragraphs) while still catching a
+ * real rewrite of delivered text. So we compare WORD streams, not bytes:
+ * each word is lowercased with leading/trailing ASCII punctuation stripped
+ * (UTF-8 continuation bytes are >=0x80 so they never get mangled). Two
+ * strings match iff their first `n` canonical words are equal.
+ * Returns 1 if the first n canonical words of a and b agree (or a has fewer
+ * than n words but then b must have exactly the same count), else 0. */
+static int canon_word_eq(const char **pa, const char **pb) {
+    /* advance each pointer over one canonical word; compare contents */
+    const char *a = *pa, *b = *pb;
+    while (*a && (unsigned char)*a <= ' ') a++;
+    while (*b && (unsigned char)*b <= ' ') b++;
+    const char *ae = a, *be = b;
+    while (*ae && (unsigned char)*ae > ' ') ae++;
+    while (*be && (unsigned char)*be > ' ') be++;
+    /* strip trailing punctuation on both sides */
+    while (ae > a && ispunct((unsigned char)ae[-1])) ae--;
+    while (be > b && ispunct((unsigned char)be[-1])) be--;
+    /* strip leading punctuation */
+    while (a < ae && ispunct((unsigned char)*a)) a++;
+    while (b < be && ispunct((unsigned char)*b)) b++;
+    size_t an = (size_t)(ae - a), bn = (size_t)(be - b);
+    if (an != bn) return 0;
+    for (size_t i = 0; i < an; i++)
+        if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) return 0;
+    *pa = ae; *pb = be;
+    return 1;
+}
+
+static int canon_prefix_match(const char *a, const char *b, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        if (!canon_word_eq(&a, &b)) return 0;      /* mismatch or a exhausted */
+    }
+    return 1;
+}
+
 int cp_pacer_apply_edit(cp_pacer *p, const char *new_text, char *err, size_t errn) {
     if (err && errn) err[0] = 0;
     if (!p || !p->s || !new_text) {
@@ -173,9 +216,47 @@ int cp_pacer_apply_edit(cp_pacer *p, const char *new_text, char *err, size_t err
         return -1;
     }
     cp_script *m = (cp_script *)p->s;
+    /* Fallback for scripts without raw text (.textream loads words only):
+     * tokenize the candidate first and compare canonical WORD streams, which
+     * is exactly the read-lock semantics we want anyway. */
     if (!m->raw) {
-        if (err) snprintf(err, errn, "script has no raw text (loaded from .textream?)");
-        return -1;
+        cp_script *tmp = cp_script_new();
+        if (cp_script_load_text(tmp, new_text, m->raw_split_pages) != 0) {
+            if (err) snprintf(err, errn, "cannot tokenize edit");
+            cp_script_free(tmp);
+            return -1;
+        }
+        size_t nlock = (size_t)floor(p->max_delivered);
+        if (nlock > m->nw) nlock = m->nw;
+        int conflict = 0;
+        if (nlock > tmp->nw) conflict = 1;         /* edit deleted delivered words */
+        for (size_t i = 0; i < nlock && !conflict; i++) {
+            const char *a = tmp->words[i].text, *b = m->words[i].text;
+            size_t alen = tmp->words[i].n, blen = m->words[i].n;
+            while (alen && ispunct((unsigned char)a[alen-1])) alen--;
+            while (blen && ispunct((unsigned char)b[blen-1])) blen--;
+            size_t ao = 0, bo = 0;
+            while (ao < alen && ispunct((unsigned char)a[ao])) ao++;
+            while (bo < blen && ispunct((unsigned char)b[bo])) bo++;
+            size_t an = alen - ao, bn = blen - bo;   /* canonical lengths */
+            if (an != bn) { conflict = 1; break; }
+            for (size_t k = 0; k < an; k++)
+                if (tolower((unsigned char)a[ao+k]) != tolower((unsigned char)b[bo+k]))
+                    { conflict = 1; break; }
+        }
+        if (conflict) {
+            if (err) snprintf(err, errn,
+                "read-lock: first %zu delivered word(s) must not change", nlock);
+            cp_script_free(tmp);
+            return -1;
+        }
+        /* adopt tokenized content: copy raw back into m via load path */
+        cp_script_load_text(m, new_text, m->raw_split_pages);
+        cp_script_free(tmp);
+        if (p->max_delivered > (double)m->nw) p->max_delivered = m->nw;
+        if (p->pos > (double)m->nw) p->pos = m->nw;
+        if (p->track_target > (double)m->nw) p->track_target = m->nw;
+        return 0;
     }
     size_t nlock = (size_t)floor(p->max_delivered);
     if (nlock > m->nw) nlock = m->nw;
@@ -184,8 +265,9 @@ int cp_pacer_apply_edit(cp_pacer *p, const char *new_text, char *err, size_t err
         if (err) snprintf(err, errn, "out of memory");
         return -1;
     }
-    size_t llen = strlen(locked);
-    int conflict = strncmp(new_text, locked, llen) != 0;
+    /* canonical word-prefix compare: whitespace/case/punctuation reformatting
+     * is allowed, changing delivered WORDS is not */
+    int conflict = !canon_prefix_match(new_text, locked, nlock);
     free(locked);
     if (conflict) {
         if (err) snprintf(err, errn,
