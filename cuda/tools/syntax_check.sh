@@ -9,8 +9,10 @@ for f in kernels/*.cu; do
   tmp=$(mktemp /tmp/chk_XXXXXX.cpp)
   # kernel<<<grid,block,args>>>() -> kernel();  (also handle gridDim vars via stub)
   sed -E 's/<<<[^>]*>>>//g' "$f" | \
-    sed -E 's/gridDim\.(x|y|z)/1u/g' > "$tmp"
-  if g++ -std=c++14 -fsyntax-only -Wall -Wextra -Iinclude -x c++ \
+    sed -E 's/gridDim\.(x|y|z)/1u/g' | \
+    sed -E 's/extern __shared__ ([a-z0-9_]+) ([a-zA-Z0-9_]+)\[\];/static \1 smbuf_[8192]; \1* \2 = smbuf_;/' | \
+    sed -E 's/__shared__//g' > "$tmp"
+  if g++ -std=c++14 -fsyntax-only -Wall -Wextra -DCP_HOST_TYPECHECK -Iinclude -x c++ \
        -Itools/fakecuda "$tmp" 2> "${tmp}.err"; then
     echo "[ok]   $n"
   else

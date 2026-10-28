@@ -69,3 +69,11 @@ inline float expf_(float v){return std::exp(v);}
 #endif
 static inline cudaError_t cudaMemcpyToSymbolStub(void* sym, const void* src, size_t n){ memcpy(sym,src,n); return cudaSuccess; }
 #define cudaMemcpyToSymbol(sym, src, n) cudaMemcpyToSymbolStub(&(sym), (src), (n))
+
+// cudaFuncSetAttribute + dynamic shared memory shims (host typecheck only)
+#ifndef __CUDACC__
+enum cudaFuncAttribute { cudaFuncAttributeMaxDynamicSharedMemorySize = 8 };
+template <typename F>
+static inline cudaError_t cudaFuncSetAttribute(F*, cudaFuncAttribute, int) { return cudaSuccess; }
+#define extern_shared_shim 1
+#endif
