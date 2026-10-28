@@ -50,26 +50,6 @@ static void rs_encode(const unsigned char *data, int n, unsigned char *ecc, int 
 }
 
 /* ---------------- version tables (ECC level M, versions 1..10) ---------- */
-/* per version: total codewords, EC codewords/block, num blocks (simple split
- * model: v>=... uses two-block groups exactly per spec table 14). */
-typedef struct { int tcw, ecblk1, nblk1, ecblk2, nblk2; } ver_m;
-static const ver_m VM[11] = {
-    {0,0,0,0,0},
-    {16, 10,1,  0,0},   /* v1  M: 1 block  (16,6? no) -> see below */
-    {28, 16,1,  0,0},
-    {44, 26,1,  0,0},
-    {64, 18,2,  0,0},
-    {86, 24,2,  0,0},
-    {108,16,4,  0,0},
-    {124,18,4,  0,0},
-    {154,22,2, 22,2},   /* v8: 2*(34,22)+2*(35,22)? handled below */
-    {182,22,3, 22,2},
-    {216,26,4, 26,1},
-};
-/* NOTE on exact spec blocks (level M):
- * v1: 1 blk (16 dw,10 ew?) -> actually v1-M = 10 data + 6 EC? No: v1 total 26
- * bits? Let me use the authoritative numbers instead of the guesses above. */
-
 /* Authoritative ECC-M parameters (ISO 18004 Table 13/14), versions 1..10:
  *   total_codewords = floor(data_bits/8); [c] EC per block; blocks split. */
 typedef struct { int cw_total, ec_per_block, blocks_short, cw_short, blocks_long, cw_long; } vm_t;
@@ -117,53 +97,50 @@ static int mat_get(mat *M, int y, int x) {
 }
 
 static void draw_finders(mat *M) {
-    int pos[8]; int np = align_positions(M->ver, pos);
-    for (int i = 0; i < np; i++)
-        for (int j = 0; j < np; j++) {
-            /* skip the three finder corners' separators handled uniformly */
-            int y = pos[i], x = pos[j];
-            int is_finder = (i==0&&j==0)||(i==0&&j==np-1)||(i==np-1&&j==0);
-            if (!is_finder) continue;
-            for (int dy = -4; dy <= 4; dy++)
-                for (int dx = -4; dx <= 4; dx++) {
-                    int d = abs(dy) > abs(dx) ? abs(dy) : abs(dx);
-                    if (d <= 3) mat_set(M, y+dy, x+dx, d != 2, 1);
-                }
-        }
-    /* timing patterns */
-    for (int k = 8; k < M->size - 8; k++) {
+    const int s = M->size;
+    /* three 8x8 finder+separator blocks anchored at matrix corners:
+     * TL(0,0) TR(0,s-8) BL(s-8,0). Inside each: 7x7 pattern + light ring. */
+    const int oy[3] = {0, 0, s - 8}, ox[3] = {0, s - 8, 0};
+    for (int c = 0; c < 3; c++)
+        for (int dy = 0; dy < 8; dy++)
+            for (int dx = 0; dx < 8; dx++) {
+                int y = oy[c] + dy, x = ox[c] + dx;
+                if (dy == 7 || dx == 7) { mat_set(M, y, x, 0, 1); continue; } /* sep */
+                int d = abs(dy - 3) > abs(dx - 3) ? abs(dy - 3) : abs(dx - 3);
+                mat_set(M, y, x, d != 2, 1);                                  /* rings */
+            }
+    /* timing patterns: full row/col 6 between the separators */
+    for (int k = 8; k < s - 8; k++) {
         mat_set(M, 6, k, !(k % 2), 1);
         mat_set(M, k, 6, !(k % 2), 1);
     }
-    /* alignment pattern(s) */
-    for (int i = 0; i < np && np >= 2; i++)
-        for (int j = 0; j < np && np >= 2; j++) {
-            int yy = pos[i], xx = pos[j];
-            int corner = (i==0&&j==0)||(i==0&&j==np-1)||(i==np-1&&j==0);
-            if (corner || (i==0&&j==1)||(i==1&&j==0)) continue; /* v-only near finders */
-            if (M->ver == 2) continue;                          /* v2 has no align pat */
-            if (!( (i==np-1 && j==np-1) )) {
-                /* only the bottom-right one exists for v<=9; keep general: */
-            }
-            for (int dy=-2; dy<=2; dy++)
-                for (int dx=-2; dx<=2; dx++) {
+    /* alignment pattern(s): all pos x pos combos except finder overlaps */
+    int pos[8]; int np = align_positions(M->ver, pos);
+    for (int i = 0; i < np; i++)
+        for (int j = 0; j < np; j++) {
+            int nearTL = (pos[i] <= 8 && pos[j] <= 8);
+            int nearTR = (pos[i] <= 8 && pos[j] >= s - 8);
+            int nearBL = (pos[i] >= s - 8 && pos[j] <= 8);
+            if (nearTL || nearTR || nearBL) continue;
+            for (int dy = -2; dy <= 2; dy++)
+                for (int dx = -2; dx <= 2; dx++) {
                     int d = abs(dy) > abs(dx) ? abs(dy) : abs(dx);
-                    mat_set(M, yy+dy, xx+dx, d != 1, 1);
+                    mat_set(M, pos[i] + dy, pos[j] + dx, d != 1, 1);
                 }
         }
-    /* reserve format areas */
+    /* reserve format areas (values written later by draw_format) */
     for (int k = 0; k <= 8; k++) {
         if (k != 6) { mat_set(M, 8, k, 0, 1); mat_set(M, k, 8, 0, 1); }
     }
     for (int k = 0; k < 8; k++) {
-        mat_set(M, 8, M->size - 1 - k, 0, 1);
-        mat_set(M, M->size - 1 - k, 8, 0, 1);
+        mat_set(M, 8, s - 1 - k, 0, 1);
+        mat_set(M, s - 1 - k, 8, 0, 1);
     }
-    mat_set(M, M->size - 8, 8, 1, 1);   /* dark module */
+    mat_set(M, s - 8, 8, 1, 1);   /* dark module */
 }
 
 /* interleave data+EC blocks into final codeword stream */
-static void interleave(const unsigned char **dbits, const unsigned char **ebs,
+static void interleave(const unsigned char **dbits, unsigned char *const *ebs,
                        int nb, const int *dcw, const int *ecw,
                        unsigned char *out, int total_cw) {
     int o = 0;
@@ -179,27 +156,8 @@ static void interleave(const unsigned char **dbits, const unsigned char **ebs,
 
 /* place codewords in the zig-zag 2-module columns, skipping col 6 */
 static void place_modules(mat *M, const unsigned char *cw, int ncw) {
-    int up = 1;
-    for (int right = M->size - 1; right >= 1; right -= 2) {
-        if (right == 6) right = 5;
-        for (int vert = 0; vert < M->size; vert++) {
-            int y = up ? M->size - 1 - vert : vert;
-            for (int j = 0; j < 2; j++) {
-                int x = right - j;
-                if (M->fn[y * M->size + x]) continue;
-                int bitidx = ((right * M->size + (up ? M->size-1-y : y)) >> 1) & 0x7fffffff;
-                (void)bitidx;
-                int idx = 0;
-                /* sequential index over non-function modules */
-                /* compute via running counter stored in M? simpler: pass order */
-                (void)idx;
-            }
-        }
-        up = !up;
-    }
-    /* The loop above was just column traversal; do placement properly now: */
     int bitno = 0;
-    up = 1;
+    int up = 1;
     for (int right = M->size - 1; right >= 1; right -= 2) {
         if (right == 6) right = 5;
         for (int vert = 0; vert < M->size; vert++) {
@@ -240,25 +198,25 @@ static void apply_mask(mat *M, int m) {
 
 static int penalty(mat *M) {
     int p = 0, s = M->size;
-    /* rule 1: runs >=5 */
-    for (int y = 0; y < s; y++) for (int run_dir = 0; run_dir < 2; run_dir++) {
+    /* rule 1: runs of >=5 same-colour modules, rows and columns: 3 + (len-5) */
+    for (int y = 0; y < s; y++) for (int dir = 0; dir < 2; dir++) {
         int run = 1;
-        for (int x = 1; x < s; x++) {
-            int cur = run_dir ? mat_get(M, x, y) : mat_get(M, y, x);
-            int prv = run_dir ? mat_get(M, x-1, y) : mat_get(M, y, x-1);
+        for (int k = 1; k < s; k++) {
+            int cur = dir ? mat_get(M, k, y) : mat_get(M, y, k);
+            int prv = dir ? mat_get(M, k-1, y) : mat_get(M, y, k-1);
             if (cur == prv) run++;
             else { if (run >= 5) p += run - 2; run = 1; }
         }
         if (run >= 5) p += run - 2;
     }
-    /* rule 2: 2x2 blocks */
+    /* rule 2: each 2x2 same-colour block: 3 */
     for (int y = 0; y < s-1; y++)
         for (int x = 0; x < s-1; x++) {
             int v = mat_get(M, y, x);
             if (v == mat_get(M, y, x+1) && v == mat_get(M, y+1, x) && v == mat_get(M, y+1, x+1))
                 p += 3;
         }
-    /* rule 3: finder-like patterns */
+    /* rule 3: 1011101 with 4 light on either side (edge counts as light): 40 */
     static const int pat[7] = {1,0,1,1,1,0,1};
     for (int y = 0; y < s; y++) for (int x = 0; x + 7 <= s; x++) {
         int h = 1, v = 1;
@@ -266,44 +224,44 @@ static int penalty(mat *M) {
             if (mat_get(M, y, x+k) != pat[k]) h = 0;
             if (mat_get(M, x+k, y) != pat[k]) v = 0;
         }
-        if (h && (x >= 4 ? 1 : 0) && mat_get(M, y, x+7) == 0 && mat_get(M,y,x-1)==0) p += 40;
-        if (v && (x >= 4 ? 1 : 0) && mat_get(M, x+7, y) == 0 && mat_get(M,x-1,y)==0) p += 40;
-        if (h && x+7 < s && mat_get(M, y, x-1) == 0 && mat_get(M,y,x+7)==0) p += 40;
-        if (v && x+7 < s && mat_get(M, x-1, y) == 0 && mat_get(M,x+7,y)==0) p += 40;
+        int hl = (x == 0) || !mat_get(M, y, x-1);
+        int hr = (x + 7 == s) || !mat_get(M, y, x+7);
+        int vl = (x == 0) || !mat_get(M, x-1, y);
+        int vr = (x + 7 == s) || !mat_get(M, x+7, y);
+        if (h && hl && hr) p += 40;
+        if (v && vl && vr) p += 40;
     }
-    /* rule 4: dark ratio */
+    /* rule 4: |dark% - 50| deviation: 10 per 5% step */
     int dark = 0;
     for (int i = 0; i < s*s; i++) if (M->m[i]) dark++;
-    int pct = dark * 100 / (s * s);
-    int dev = abs(pct - 50);
-    p += (dev / 5) * 10;
+    int k = abs(dark * 200 - s * s * 100) / (s * s * 10);   /* floor(|pct-50|/5) */
+    p += k * 10;
     return p;
 }
 
-/* format info: 5 data bits (ec=00 M, mask 3 bits) BCH(15,5) + XOR 0x5412 */
+/* format info: EC-M = bits 00, so data = mask value directly (bits b9..b5 =
+ * 0,0,m2,m1,m0). BCH(15,5) with G(x)=0x537, XOR mask 0x5412 — ISO 18004 8.9. */
 static int format_bits(int mask) {
-    int data = (0 << 3) | mask;         /* EC level M = 00 */
-    int rem = data << 10;
+    int rem = mask << 10;                       /* data bits already zero above */
     for (int i = 14; i >= 10; i--)
-        if ((rem >> i) & 1) rem ^= 0x537 << (i - 10);   /* G(x)=0x537 */
-    int f = ((data << 10) | rem) ^ 0x5412;
-    return f;
+        if ((rem >> i) & 1) rem ^= 0x537 << (i - 10);
+    return ((mask << 10) | rem) ^ 0x5412;
 }
 static void draw_format(mat *M, int mask) {
     int f = format_bits(mask);
     for (int i = 0; i < 15; i++) {
-        int b = (f >> i) & 1;
-        /* copy 1 */
+        int b = (f >> i) & 1;                   /* bit 0 first */
+        /* copy 1: around top-left finder */
         if (i < 6)       mat_set(M, 8, i, b, 1);
         else if (i == 6) mat_set(M, 8, 7, b, 1);
         else if (i == 7) mat_set(M, 8, 8, b, 1);
         else if (i == 8) mat_set(M, 7, 8, b, 1);
         else             mat_set(M, 14 - i, 8, b, 1);
-        /* copy 2 */
+        /* copy 2: bottom-left vertical + top-right horizontal */
         if (i < 8)       mat_set(M, M->size - 1 - i, 8, b, 1);
         else             mat_set(M, 8, M->size - 15 + i, b, 1);
     }
-    mat_set(M, M->size - 8, 8, 1, 1);
+    mat_set(M, M->size - 8, 8, 1, 1);           /* dark module stays dark */
 }
 
 /* ---------------- public API ---------------- */
@@ -320,24 +278,17 @@ cp_qr *cp_qr_encode(const char *text) {
         int need_bits = 4 + cc + (int)len * 8;
         if (need_bits <= data_cw * 8) { ver = v; break; }
     }
+
     if (!ver) return NULL;
     const vm_t *P = &VMT[ver];
     int nb = P->blocks_short + P->blocks_long;
     int ec_per = P->ec_per_block;
 
-    /* build bitstream */
-    unsigned char *bits = calloc((size_t)P->cw_total * 8 + 16, 1);
-    int bl = 0;
-    #define PUSHBIT(b_) do { bits[bl++] = (b_); } while (0)
+    /* build bitstream (packed into data codewords) */
+    int data_cw = P->cw_total - ec_per * nb;
+    unsigned char *cw = calloc((size_t)data_cw, 1);
+    int cap_bits = data_cw * 8;
     int cc = ver <= 9 ? 8 : 16;
-    for (int i = 3; i >= 0; i--) PUSHBIT((1 >> i) & 0);           /* mode 0100 */
-    for (int i = 3; i >= 0; i--) PUSHBIT((1 << i) & 1 ? 0 : 0);   /* placeholder fix below */
-    #undef PUSHBIT
-    free(bits);
-
-    /* simpler: manual bit writer */
-    unsigned char *cw = calloc((size_t)P->cw_total, 1);   /* data codewords area */
-    int cap_bits = (P->cw_total - ec_per * nb) * 8;
     int wpos = 0;
     #define WB(val,nbits) do { for (int z = (nbits)-1; z >= 0; z--) { \
             if (wpos < cap_bits) cw[wpos >> 3] |= (unsigned char)((((val) >> z) & 1) << (7 - (wpos & 7))); \
@@ -355,7 +306,7 @@ cp_qr *cp_qr_encode(const char *text) {
 
     /* split into blocks, encode EC */
     const unsigned char **dbits = calloc((size_t)nb, sizeof(void*));
-    const unsigned char **ebs = calloc((size_t)nb, sizeof(void*));
+    unsigned char **ebs = calloc((size_t)nb, sizeof(void*));
     int *dcw = calloc((size_t)nb, sizeof(int));
     int *ecw = calloc((size_t)nb, sizeof(int));
     int off = 0;
