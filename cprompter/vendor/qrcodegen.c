@@ -110,7 +110,7 @@ static void draw_finders(mat *M) {
                 mat_set(M, y, x, d != 2, 1);                                  /* rings */
             }
     /* timing patterns: full row/col 6 between the separators */
-    for (int k = 8; k < s - 8; k++) {
+    for (int k = 0; k < s; k++) {   /* full-length timing per ISO */
         mat_set(M, 6, k, !(k % 2), 1);
         mat_set(M, k, 6, !(k % 2), 1);
     }
