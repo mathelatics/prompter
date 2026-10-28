@@ -96,6 +96,7 @@ int cp_script_load_text(cp_script *s, const char *text, int split_pages) {
     free(s->raw);
     s->raw = strdup(text);
     if (!s->raw) return -1;
+    s->raw_split_pages = split_pages;   /* remembered for cp_script_edit_text */
 
     int para = 0;
     int new_page = 1;               /* start first page */

@@ -217,3 +217,57 @@ void cp_engine_sensitivity(cp_engine *e, float delta) {
     cp_vad_set_sensitivity(e->vad, e->sensitivity);
     pthread_mutex_unlock(&e->mu);
 }
+
+/* ---- M3: remote/director plumbing -------------------------------------- */
+
+void cp_engine_snapshot(cp_engine *e, cp_engine_state *out) {
+    if (!e || !out) return;
+    memset(out, 0, sizeof *out);
+    pthread_mutex_lock(&e->mu);
+    const cp_pacer *p = e->p;
+    out->pos           = p->pos;
+    out->max_delivered = p->max_delivered;
+    out->speed_wps     = p->speed_wps;
+    out->nw            = e->s->nw;
+    out->word_index    = (int)cp_pacer_word_index(p);
+    out->page_index    = cp_page_of(e->s, (size_t)out->word_index);
+    out->paused        = p->paused;
+    out->finished      = cp_pacer_finished(p);
+    out->mode          = (int)e->s->default_mode;
+    out->speaking      = e->audio_live ? cp_vad_speaking(e->vad) : 0;
+    out->level         = e->audio_live ? cp_vad_level(e->vad) : 0.0f;
+    out->wpm           = cp_wpm_estimate(e->wpm);
+    pthread_mutex_unlock(&e->mu);
+}
+
+int cp_engine_is_paused(const cp_engine *e) {
+    cp_engine *m = (cp_engine *)e;
+    pthread_mutex_lock(&m->mu);
+    int v = m->p->paused;
+    pthread_mutex_unlock(&m->mu);
+    return v;
+}
+
+size_t cp_engine_nwords(const cp_engine *e) {
+    cp_engine *m = (cp_engine *)e;
+    pthread_mutex_lock(&m->mu);
+    size_t v = m->s->nw;
+    pthread_mutex_unlock(&m->mu);
+    return v;
+}
+
+int cp_engine_apply_edit(cp_engine *e, const char *new_text,
+                         char *err, size_t errn) {
+    pthread_mutex_lock(&e->mu);
+    int rc = cp_pacer_apply_edit(e->p, new_text, err, errn);
+    pthread_mutex_unlock(&e->mu);
+    return rc;
+}
+
+void cp_engine_after_edit(cp_engine *e) {
+    if (!e) return;
+    pthread_mutex_lock(&e->mu);
+    if (e->align) cp_align_reset(e->align, cp_pacer_word_index(e->p));
+    if (e->track) cp_track_flush(e->track);
+    pthread_mutex_unlock(&e->mu);
+}

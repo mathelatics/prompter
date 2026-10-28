@@ -49,4 +49,24 @@ void cp_engine_update_track(cp_engine *e);
 /* M2: snap display position onto the tracker cursor (tap-to-resync) */
 void cp_engine_resync(cp_engine *e);
 
+/* ---- M3 remote/director plumbing (server/remote.c consumers) ---- */
+/* one-stop snapshot for the 10 Hz push; any field may be NULL */
+typedef struct {
+    double pos, max_delivered, speed_wps;
+    size_t nw;
+    int    word_index, page_index, paused, speaking, finished;
+    float  level;          /* mic 0..1 (0 without audio)        */
+    float  wpm;            /* observed speaking rate (0 = none) */
+    int    mode;           /* cp_mode                           */
+} cp_engine_state;
+void cp_engine_snapshot(cp_engine *e, cp_engine_state *out);
+
+int   cp_engine_is_paused(const cp_engine *e);
+size_t cp_engine_nwords(const cp_engine *e);
+/* director edit (read-lock enforced inside pacer): 0 ok, -1 conflict + err */
+int   cp_engine_apply_edit(cp_engine *e, const char *new_text,
+                           char *err, size_t errn);
+/* re-point derived trackers after an in-place script change */
+void  cp_engine_after_edit(cp_engine *e);
+
 #endif

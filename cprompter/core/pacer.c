@@ -5,6 +5,8 @@
 #include "pacer.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static cp_mode active_mode(const cp_pacer *p) {
@@ -118,6 +120,85 @@ size_t cp_pacer_word_index(const cp_pacer *p) {
     if (i < 0) i = 0;
     if ((size_t)i >= p->s->nw) i = (long)(p->s->nw ? p->s->nw - 1 : 0);
     return (size_t)i;
+}
+
+/* ---- M3: director read-lock ---------------------------------------------
+ * max_delivered is the monotone high-water mark of words shown to the
+ * audience. Textream's Director Mode refuses edits to text already read;
+ * we enforce that on the TOKEN stream (authoritative, tokenizer-exact) by
+ * serializing delivered words + raw tail into a canonical snapshot string.
+ * An incoming edit must keep that snapshot as an exact prefix; if it does,
+ * we splice new_text onto the unchanged tail and re-tokenize in place. */
+
+/* Serialize the first `n` script words followed by the untouched remainder
+ * of raw starting at word n's byte offset. Words are joined with single
+ * spaces so any equivalent whitespace spelling collapses to one canon. */
+static char *serialize_upto(const cp_script *s, size_t n) {
+    if (!s || !s->raw) return NULL;
+    size_t cap = 0;
+    for (size_t i = 0; i < n && i < s->nw; i++) cap += s->words[i].n + 1;
+    cap += strlen(s->raw) + 2;
+    char *buf = malloc(cap);
+    if (!buf) return NULL;
+    size_t k = 0;
+    for (size_t i = 0; i < n && i < s->nw; i++) {
+        if (i) buf[k++] = ' ';
+        memcpy(buf + k, s->words[i].text, s->words[i].n);
+        k += s->words[i].n;
+    }
+    /* append raw from the end-offset of the last serialized word */
+    size_t off = 0;
+    if (n > 0 && n <= s->nw) {
+        const char *last = s->words[n - 1].text;
+        off = (size_t)(last - s->raw) + s->words[n - 1].n;
+    }
+    size_t rl = strlen(s->raw + off);
+    memcpy(buf + k, s->raw + off, rl + 1);
+    return buf;
+}
+
+size_t cp_script_chars_for_words(const cp_script *s, double words) {
+    if (!s || !s->raw || s->raw[0] == 0) return 0;
+    size_t n = (size_t)floor(words);
+    if (n >= s->nw) return strlen(s->raw);
+    if (n == 0) return 0;
+    const cp_word *w = &s->words[n - 1];
+    return (size_t)(w->text - s->raw) + w->n;   /* end offset of nth word */
+}
+
+int cp_pacer_apply_edit(cp_pacer *p, const char *new_text, char *err, size_t errn) {
+    if (err && errn) err[0] = 0;
+    if (!p || !p->s || !new_text) {
+        if (err) snprintf(err, errn, "invalid arguments");
+        return -1;
+    }
+    cp_script *m = (cp_script *)p->s;
+    if (!m->raw) {
+        if (err) snprintf(err, errn, "script has no raw text (loaded from .textream?)");
+        return -1;
+    }
+    size_t nlock = (size_t)floor(p->max_delivered);
+    if (nlock > m->nw) nlock = m->nw;
+    char *locked = serialize_upto(m, nlock);
+    if (!locked) {
+        if (err) snprintf(err, errn, "out of memory");
+        return -1;
+    }
+    size_t llen = strlen(locked);
+    int conflict = strncmp(new_text, locked, llen) != 0;
+    free(locked);
+    if (conflict) {
+        if (err) snprintf(err, errn,
+            "read-lock: first %zu delivered word(s) must not change", nlock);
+        return -1;
+    }
+    /* safe: re-tokenize in place (same cp_script* keeps identity) */
+    cp_script_load_text(m, new_text, m->raw_split_pages);
+    /* clamp pacer state into the new bounds; keep high-water semantics */
+    if (p->max_delivered > (double)m->nw) p->max_delivered = m->nw;
+    if (p->pos > (double)m->nw) p->pos = m->nw;
+    if (p->track_target > (double)m->nw) p->track_target = m->nw;
+    return 0;
 }
 
 int cp_pacer_finished(const cp_pacer *p) {

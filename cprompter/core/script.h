@@ -33,6 +33,7 @@ typedef struct cp_script {
     cp_word *words;  size_t nw, capw;
     cp_page  *pages; size_t np, capp;
     char     *raw;   /* full original text (kept for save fidelity) */
+    int       raw_split_pages; /* how raw was tokenized (reload after edit) */
     /* settings mirroring .textream JSON from the blog post */
     cp_mode  default_mode;
     double   default_speed;   /* words/sec */

@@ -87,15 +87,21 @@ static void test_pacer_voice_track(void) {
     cp_pacer_init(&p, s, 2.0);
     cp_pacer_feed_align(&p, 6.0);
     double prev = -1; int monotone = 1;
-    for (int i = 0; i < 60; i++) {
+    for (int i = 0; i < 600; i++) {          /* 60s sim: catch-up cap ~5 w/s */
         t += 0.1; cp_pacer_tick(&p, t, 0.1);
         if (p.pos < prev - 1e-12) monotone = 0;
         prev = p.pos;
     }
     CHECK(monotone);
     CHECK(p.pos >= 5.9);                 /* converged near target */
-    cp_pacer_feed_align(&p, 2.0);        /* backward ASR correction ignored */
-    CHECK(p.track_target >= 5.9);
+    /* bounded backtrack (plan §4.1): small re-read corrections allowed,
+     * large backward ASR jumps ignored (never below max_delivered-6) */
+    cp_pacer_feed_align(&p, 2.0);        /* way below floor -> rejected      */
+    CHECK(p.track_target == 6.0);
+    cp_pacer_feed_align(&p, 5.0);        /* within 6-word window -> accepted */
+    CHECK(p.track_target == 5.0);
+    cp_pacer_feed_align(&p, 11.5);       /* forward always accepted          */
+    CHECK(p.track_target == 11.5);
     cp_script_free(s);
 }
 

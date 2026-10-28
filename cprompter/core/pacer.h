@@ -40,4 +40,13 @@ size_t cp_pacer_word_index(const cp_pacer *p);        /* floor(pos) clamped */
 int    cp_pacer_finished(const cp_pacer *p);
 double cp_pacer_remaining_seconds(const cp_pacer *p);
 
+/* M3 director read-lock (see pacer.c comment): chars of s->raw covering the
+ * first `words` delivered words. 0 before speech starts, len when done. */
+size_t cp_script_chars_for_words(const cp_script *s, double words);
+/* Apply a full-script text replacement from Director Mode. Returns 0 and
+ * re-tokenizes the script in place; returns -1 (and fills err) if the edit
+ * touches already-delivered words (read-lock -> HTTP 409 upstream). */
+int    cp_pacer_apply_edit(cp_pacer *p, const char *new_text,
+                           char *err, size_t errn);
+
 #endif /* CP_PACER_H */
