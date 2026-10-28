@@ -1,5 +1,6 @@
 /* test_core.c — M0 unit tests: tokenizer, pacer modes, .textream round-trip.
  * Build via `make test`. No framework; CHECK macro with counters. */
+#define _POSIX_C_SOURCE 200809L   /* nanosleep under -std=c11 */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +10,7 @@
 #include "../core/script.h"
 #include "../core/pacer.h"
 #include "../format/script_io.h"
+#include "../format/pptx.h"
 #include "../audio/align.h"
 #include "../audio/track.h"
 
@@ -249,6 +251,52 @@ static void test_track_mock_pipeline(void) {
     cp_align_free(a); cp_script_free(s); cp_track_close(t);
 }
 
+/* ---- M4: pptx presenter-notes import ------------------------------------- */
+static void test_pptx_extract(void) {
+    /* unit-level: <a:t> run extraction + paragraph breaks + entity decode */
+    const char *xml =
+        "<p:txBody><a:p><a:r><a:t>Hello &amp; welcome</a:t></a:r></a:p>"
+        "<a:p><a:r><a:t>Second para &lt;ok&gt;</a:t></a:r>"
+        "<a:r><a:t> same para continued</a:t></a:r></a:p>"
+        "<a:p/><a:endParaRPr/></p:txBody>";
+    char *out = cp_pptx_extract_at_texts(xml, strlen(xml));
+    CHECK(out != NULL);
+    CHECK(!strcmp(out, "Hello & welcome\nSecond para <ok> same para continued\n"));
+    free(out);
+}
+
+static void test_pptx_load(void) {
+    /* build a minimal but valid .pptx with 2 notes slides via python zipfile */
+    int rc = system("python3 tools/make_test_pptx.py /tmp/cp_test.pptx >/dev/null 2>&1");
+    if (rc != 0) { /* no python? skip gracefully but say so */ 
+        printf("(skipping pptx load test: fixture generator failed)\n");
+        return;
+    }
+    cp_script *s = cp_script_new();
+    char err[128];
+    int r = cp_script_load_pptx(s, "/tmp/cp_test.pptx", err, sizeof err);
+    CHECK(r == 0);
+    if (r == 0) {
+        CHECK(s->np == 2);                       /* two notes slides -> two pages */
+        /* slide order must be numeric: slide 1 text before slide 2 text */
+        CHECK(strstr(s->raw, "Opening remarks") != NULL);
+        CHECK(strstr(s->raw, "Closing line") != NULL);
+        const char *a = strstr(s->raw, "Opening remarks");
+        const char *b = strstr(s->raw, "Closing line");
+        CHECK(a && b && a < b);
+        CHECK(s->nw >= 6);
+    } else {
+        printf("(pptx load err: %s)\n", err);
+    }
+    cp_script_free(s);
+    /* negative: not a zip */
+    FILE *f = fopen("/tmp/cp_notapptx.pptx", "wb"); fputs("junk", f); fclose(f);
+    cp_script *s2 = cp_script_new();
+    CHECK(cp_script_load_pptx(s2, "/tmp/cp_notapptx.pptx", err, sizeof err) == -1);
+    cp_script_free(s2);
+    remove("/tmp/cp_notapptx.pptx");
+}
+
 int main(void) {
     test_tokenizer();
     test_pacer_classic();
@@ -257,6 +305,8 @@ int main(void) {
     test_align_basic();
     test_align_helpers();
     test_track_mock_pipeline();
+    test_pptx_extract();
+    test_pptx_load();
     printf("%d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -16,7 +16,7 @@ LDLIBS  ?= -lm -lpthread -ldl
 
 CORE_SRC := main.c \
             core/script.c core/pacer.c core/engine.c \
-            format/script_io.c \
+            format/script_io.c format/pptx.c \
             audio/audio.c audio/vad.c audio/wpm.c \
             audio/align.c audio/track.c audio/wav.c \
             ui/hotkeys.c
@@ -46,7 +46,7 @@ endif
 
 TEST_SRC := tools/test_core.c \
             core/script.c core/pacer.c core/engine.c \
-            format/script_io.c \
+            format/script_io.c format/pptx.c \
             audio/audio.c audio/vad.c audio/wpm.c \
             audio/align.c audio/track.c audio/wav.c \
             ui/hotkeys.c

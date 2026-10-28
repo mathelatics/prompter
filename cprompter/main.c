@@ -17,6 +17,7 @@
 #include "core/pacer.h"
 #include "core/engine.h"
 #include "format/script_io.h"
+#include "format/pptx.h"
 
 static double now_sec(void) {
     struct timespec ts;
@@ -83,11 +84,21 @@ int main(int argc, char **argv) {
 
     /* ---- load ---- */
     cp_script *s = cp_script_new();
+
+    size_t rl = strlen(o.path);
+    if (rl >= 5 && !strcmp(o.path + rl - 5, ".pptx")) {
+        /* M4: PowerPoint presenter-notes import (needs system unzip) */
+        char err[128];
+        if (cp_script_load_pptx(s, o.path, err, sizeof err) != 0) {
+            fprintf(stderr, "pptx import: %s\n", err);
+            cp_script_free(s);
+            return 1;
+        }
+    } else {
     size_t len = 0;
     char *raw = read_file(o.path, &len);
     if (!raw) { fprintf(stderr, "cannot read script: %s\n", o.path); return 1; }
 
-    size_t rl = strlen(o.path);
     if (rl >= 9 && !strcmp(o.path + rl - 9, ".textream")) {
         char err[128];
         if (cp_script_load_textream(s, o.path, err, sizeof err) != 0) {
@@ -99,6 +110,7 @@ int main(int argc, char **argv) {
         cp_script_load_text(s, raw, 1);
     }
     free(raw);
+    }
     if (o.mode != (cp_mode)-1) s->default_mode = o.mode;
     s->default_speed = o.speed;
 

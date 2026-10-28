@@ -113,6 +113,7 @@ static void handle_action(view *v, cp_key_action a, double now) {
     case CPK_RESYNC: cp_engine_resync(v->e);
         toast(v, now, "tracker resynced"); break;
     case CPK_MIRROR: v->mirror = (v->mirror + 1) % 4;
+        s->mirror = v->mirror;   /* persist into script so --save-out keeps it */
         toast(v, now, "mirror: %s",
               v->mirror==0?"off":v->mirror==1?"horizontal":v->mirror==2?"vertical":"180°"); break;
     case CPK_OVERLAY: v->style = v->style == CP_OVERLAY_FULLSCREEN
@@ -148,7 +149,8 @@ int cp_overlay_sdl_run(cp_engine *e, int loop, cp_overlay_style style) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
-    view v = { .e = e, .s = s, .p = cp_engine_pacer(e), .style = style };
+    view v = { .e = e, .s = s, .p = cp_engine_pacer(e), .style = style,
+               .mirror = s->mirror };   /* M4: honor saved mirror setting */
 #ifdef CP_HAVE_SDL_TTF
     TTF_Init();
     v.font = TTF_OpenFont("assets/fonts.ttf", s->font_size > 0 ? s->font_size : 28);
