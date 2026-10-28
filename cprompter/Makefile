@@ -19,8 +19,14 @@ CORE_SRC := main.c \
             format/script_io.c format/pptx.c \
             audio/audio.c audio/vad.c audio/wpm.c \
             audio/align.c audio/track.c audio/wav.c \
+            ai/json.c ai/http_client.c ai/openai.c ai/coach.c \
             ui/hotkeys.c
 SERVER_SRC := server/http_ws.c server/remote.c vendor/qrcodegen.c
+
+# curl fallback for https:// cloud endpoints (optional)
+ifeq ($(CURL),1)
+  CFLAGS += -DCP_HAVE_CURL=1
+endif
 
 SRCDIRS := core format audio ui
 SRC     := $(CORE_SRC) $(if $(filter 1,$(SERVER)), $(SERVER_SRC))
@@ -49,6 +55,7 @@ TEST_SRC := tools/test_core.c \
             format/script_io.c format/pptx.c \
             audio/audio.c audio/vad.c audio/wpm.c \
             audio/align.c audio/track.c audio/wav.c \
+            ai/json.c ai/http_client.c ai/openai.c ai/coach.c \
             ui/hotkeys.c
 TEST_BIN := cp_tests
 

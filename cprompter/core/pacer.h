@@ -23,6 +23,7 @@ typedef struct cp_pacer {
 } cp_pacer;
 
 void   cp_pacer_init(cp_pacer *p, const cp_script *s, double start_speed_wps);
+void   cp_pacer_set_speed(cp_pacer *p, double wps);   /* live speed change */
 
 /* Advance clock by dt seconds using the active mode. Call once per frame. */
 void   cp_pacer_tick(cp_pacer *p, double now_sec, double dt);

@@ -18,6 +18,7 @@
 #include "core/engine.h"
 #include "format/script_io.h"
 #include "format/pptx.h"
+#include "ai/coach.h"
 
 static double now_sec(void) {
     struct timespec ts;
@@ -44,6 +45,8 @@ typedef struct {
     int     loop;
     int     show_help;
     cp_mode mode;        /* override (-1 none) */
+    int     coach;       /* M5: 0 rules-off, 1 local rules, 2 + LLM advisor */
+    float   target_wpm;  /* coach ideal pace                              */
 } opts;
 
 static void usage(void) {
@@ -55,11 +58,15 @@ static void usage(void) {
       "  --headless          no curses/SDL, plain stdout (for CI/ssh)\n"
       "  --loop              restart at end\n"
       "  --save-out <path>   write loaded script as .textream and exit\n"
+      "  --coach <rules|llm>  M5 AI coach (rules = offline heuristics;\n"
+      "                      llm adds OpenAI-compatible advisor via\n"
+      "                      CCP_BASE_URL / CCP_MODEL / CCP_API_KEY)\n"
+      "  --target-wpm <n>    coach's ideal speaking rate (default 150)\n"
       "  -h, --help          this message\n");
 }
 
 int main(int argc, char **argv) {
-    opts o = { "samples/demo.txt", 3.0, 0, 0, 0, (cp_mode)-1 };
+    opts o = { "samples/demo.txt", 3.0, 0, 0, 0, (cp_mode)-1, 0, 150 };
     const char *save_out = NULL;
 
     for (int i = 1; i < argc; i++) {
@@ -67,6 +74,11 @@ int main(int argc, char **argv) {
         if (!strcmp(a, "--speed") && i + 1 < argc) o.speed = atof(argv[++i]);
         else if (!strcmp(a, "--headless")) o.headless = 1;
         else if (!strcmp(a, "--loop")) o.loop = 1;
+        else if (!strcmp(a, "--coach") && i + 1 < argc) {
+            const char *c = argv[++i];
+            o.coach = !strcmp(c, "llm") ? 2 : !strcmp(c, "rules") ? 1 : 0;
+        }
+        else if (!strcmp(a, "--target-wpm") && i + 1 < argc) o.target_wpm = (float)atof(argv[++i]);
         else if (!strcmp(a, "--save-out") && i + 1 < argc) save_out = argv[++i];
         else if (!strcmp(a, "--mode") && i + 1 < argc) {
             const char *m = argv[++i];
@@ -155,6 +167,23 @@ int main(int argc, char **argv) {
     }
 #endif
     /* ---- headless / terminal loop: one line per frame, ANSI clear ---- */
+    /* M5 coach (rules always local; --coach llm adds OpenAI-compatible advisor) */
+    cp_coach *coach = NULL;
+    int coach_seq = 0;
+    if (o.coach) {
+        cp_coach_params cpar; memset(&cpar, 0, sizeof cpar);
+        cpar.enable_llm = (o.coach >= 2);
+        cpar.target_wpm = o.target_wpm;
+        if (cpar.enable_llm && cp_openai_cfg_from_env(&cpar.cfg) != 0) {
+            fprintf(stderr, "coach: bad CCP_BASE_URL, falling back to rules\n");
+            cpar.enable_llm = 0;
+        }
+        char cerr[256] = "";
+        coach = cp_coach_new(&cpar, cerr, sizeof cerr);
+        if (!coach) fprintf(stderr, "coach init failed: %s\n", cerr);
+        else printf("coach: %s (target %.0f wpm)\n",
+                    cpar.enable_llm ? "rules+llm" : "rules", cpar.target_wpm);
+    }
     double t0 = now_sec(), last_print = 0;
     int prev_word = -1;
     int pg = 0;
@@ -164,6 +193,28 @@ int main(int argc, char **argv) {
         if (dt > 0.05) dt = 0.05;                 /* cap on slow terminals */
         cp_pacer_tick(&p, now, dt);
         last_print = now;
+
+        if (coach) {
+            cp_advice a;
+            cp_coach_update(coach, s, &p, (float)p.measured_wpm,
+                            p.vad_active, now);
+            if (cp_coach_poll(coach, &a, &coach_seq)) {
+                /* apply auto-director actions the same way a human would */
+                switch (a.kind) {
+                    case CP_ADVICE_SLOW_DOWN:
+                        cp_pacer_set_speed(&p, p.speed_wps * 0.85); break;
+                    case CP_ADVICE_SPEED_UP:
+                        cp_pacer_set_speed(&p, p.speed_wps * 1.15); break;
+                    case CP_ADVICE_PUSH_NEXT:
+                        if ((size_t)pg + 1 < s->np)
+                            cp_pacer_jump(&p, s->pages[pg + 1].w0, 1); break;
+                    case CP_ADVICE_HOLD:
+                        cp_pacer_set_paused(&p, 1); break;
+                    default: break;
+                }
+                fprintf(stderr, "\r\033[K\033[36m[coach] %s\033[0m\n", a.text);
+            }
+        }
 
         size_t wi = cp_pacer_word_index(&p);
         if ((int)wi != prev_word) {
