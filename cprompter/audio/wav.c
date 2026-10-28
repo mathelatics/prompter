@@ -49,6 +49,7 @@ static uint32_t rd32(const unsigned char *p) { return p[0]|p[1]<<8|p[2]<<16|(uin
 static uint16_t rd16(const unsigned char *p) { return p[0]|p[1]<<8; }
 
 static int wav_read(const char *path, wavfile *o) {
+    (void)path; (void)o;   /* used only under CP_WAV_MAIN builds */
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
     fseek(f, 0, SEEK_END); long flen = ftell(f); fseek(f, 0, SEEK_SET);

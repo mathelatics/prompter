@@ -1,6 +1,7 @@
 /* engine.c — thread-safe glue: audio cb -> vad/wpm -> pacer; UI reads via
  * mutex-protected getters. Pacer is ticked by the UI thread (owner of clock);
  * voice data flows in asynchronously. */
+#define _POSIX_C_SOURCE 200809L   /* CLOCK_MONOTONIC under -std=c11 */
 #include "engine.h"
 #include "../audio/audio.h"
 #include "../audio/vad.h"
@@ -107,6 +108,8 @@ void cp_engine_stop(cp_engine *e) {
 }
 
 const cp_pacer *cp_engine_pacer(const cp_engine *e) { return e->p; }
+
+const cp_script *cp_engine_script(const cp_engine *e) { return e->s; }
 
 int cp_engine_speaking(const cp_engine *e) {
     cp_engine *m = (cp_engine *)e;

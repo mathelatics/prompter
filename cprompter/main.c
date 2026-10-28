@@ -15,6 +15,7 @@
 #endif
 #include "core/script.h"
 #include "core/pacer.h"
+#include "core/engine.h"
 #include "format/script_io.h"
 
 static double now_sec(void) {
@@ -118,7 +119,25 @@ int main(int argc, char **argv) {
 
 #if CP_HAVE_SDL
     if (!o.headless && isatty(1)) {
-        int rc = cp_overlay_sdl_run(s, &p, o.loop);   /* takes over the loop */
+        /* engine owns audio/VAD/WPM/track; overlay owns the UI clock */
+        cp_engine_params ep = {0};
+        ep.dev = NULL;
+        ep.enable_audio = (s->default_mode == CP_MODE_VOICE);
+        ep.track.backend = (s->default_mode == CP_MODE_TRACK)
+                           ? CP_TRACK_WHISPER : CP_TRACK_NONE;
+        ep.track.lang = s->lang[0] ? s->lang : "en";
+        char eerr[256] = "";
+        cp_engine *eng = cp_engine_new(s, &p, &ep, eerr, sizeof eerr);
+        if (!eng) {
+            fprintf(stderr, "engine: %s (falling back to classic clock)\n", eerr);
+            ep.enable_audio = 0;
+            ep.track.backend = CP_TRACK_NONE;
+            eng = cp_engine_new(s, &p, &ep, eerr, sizeof eerr);
+            if (!eng) { fprintf(stderr, "engine init failed: %s\n", eerr);
+                        cp_script_free(s); return 1; }
+        }
+        int rc = cp_overlay_sdl_run(eng, o.loop, CP_OVERLAY_FULLSCREEN);
+        cp_engine_free(eng);
         cp_script_free(s);
         return rc;
     }

@@ -108,7 +108,12 @@ void cp_pacer_feed_align(cp_pacer *p, double aligned_pos) {
     if (aligned_pos >= p->track_target) {          /* forward: always ok   */
         p->track_target = aligned_pos;
     } else {
-        double lo = p->max_delivered - 6.0;        /* bounded backtrack    */
+        /* Bounded backtrack: re-reads may pull the cursor back, but never
+         * below max_delivered-6 NOR below the display position itself —
+         * a target behind pos would make tick() stall/reverse the render.
+         * (matches align.c AL_MAX_BACK semantics) */
+        double lo = p->max_delivered - 6.0;
+        if (lo < p->pos) lo = p->pos;              /* floor at display     */
         if (aligned_pos > lo && !p->paused) p->track_target = aligned_pos;
     }
 }

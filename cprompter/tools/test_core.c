@@ -95,13 +95,23 @@ static void test_pacer_voice_track(void) {
     CHECK(monotone);
     CHECK(p.pos >= 5.9);                 /* converged near target */
     /* bounded backtrack (plan §4.1): small re-read corrections allowed,
-     * large backward ASR jumps ignored (never below max_delivered-6) */
-    cp_pacer_feed_align(&p, 2.0);        /* way below floor -> rejected      */
+     * large backward ASR jumps ignored (never below max_delivered-6).
+     * Fresh pacer + tick so pos advances toward the target; then a jump
+     * back to 2.0 must be rejected (floor = max_delivered(6)-6 = 0 < 2),
+     * while 5.0 is forward-of-pos and accepted. */
+    cp_pacer_init(&p, s, 2.0);
+    cp_pacer_feed_align(&p, 6.0);
+    CHECK(p.track_target == 6.0);            /* forward from 0 accepted   */
+    for (int i = 0; i < 80; i++) { t += 0.1; cp_pacer_tick(&p, t, 0.1); }
+    CHECK(p.pos > 2.5 && p.pos < 6.0);       /* easing, capped catch-up   */
+    cp_pacer_feed_align(&p, 2.0);            /* behind pos -> rejected    */
     CHECK(p.track_target == 6.0);
-    cp_pacer_feed_align(&p, 5.0);        /* within 6-word window -> accepted */
-    CHECK(p.track_target == 5.0);
-    cp_pacer_feed_align(&p, 11.5);       /* forward always accepted          */
-    CHECK(p.track_target == 11.5);
+    cp_pacer_feed_align(&p, 5.0);            /* ahead of pos -> accepted  */
+    CHECK(fabs(p.track_target - 5.0) < 1e-9);
+    cp_pacer_feed_align(&p, 0.0);            /* far behind -> rejected    */
+    CHECK(fabs(p.track_target - 5.0) < 1e-9);
+    cp_pacer_feed_align(&p, 11.5);           /* forward always accepted   */
+    CHECK(fabs(p.track_target - 11.5) < 1e-9);
     cp_script_free(s);
 }
 

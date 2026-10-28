@@ -143,7 +143,7 @@ static void draw_text(view *v, SDL_Renderer *ren, int x, int y, const char *utf8
 static Uint8 RGBx(Uint32 c, int shift) { return (Uint8)((c >> shift) & 0xFF); }
 
 int cp_overlay_sdl_run(cp_engine *e, int loop, cp_overlay_style style) {
-    const cp_script *s = (const cp_script *)e->s;  /* engine keeps script ptr */
+    const cp_script *s = cp_engine_script(e);  /* engine keeps script ptr */
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
@@ -200,7 +200,9 @@ int cp_overlay_sdl_run(cp_engine *e, int loop, cp_overlay_style style) {
         SDL_RenderClear(ren);
 
         size_t cur = cp_pacer_word_index(v.p);
+#ifdef CP_HAVE_SDL_TTF
         int line_h = v.style == CP_OVERLAY_NOTCH ? 34 : 44;
+#endif
         int center_y = v.style == CP_OVERLAY_NOTCH ? 10 : H * 3 / 10;
         Uint32 hlc = hl_colors[s->highlight_color % 6];
 

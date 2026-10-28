@@ -28,6 +28,7 @@ void cp_engine_stop(cp_engine *e);
 
 /* shared-state getters for renderers (called from UI thread) */
 const cp_pacer   *cp_engine_pacer(const cp_engine *e);
+const cp_script  *cp_engine_script(const cp_engine *e);   /* public model   */
 int               cp_engine_speaking(const cp_engine *e);
 float             cp_engine_level(const cp_engine *e);      /* 0..1 waveform */
 float             cp_engine_wpm(const cp_engine *e);
