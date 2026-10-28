@@ -1,0 +1,3 @@
+*.o
+cprompter/cp_tests
+cprompter/cprompter
