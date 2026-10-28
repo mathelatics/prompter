@@ -65,12 +65,14 @@ static double mono_now(void) {
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
+#ifdef CP_HAVE_WHISPER
 static void q_push(cp_track *t, const char *w) {
     if (t->qn >= TR_WORD_Q) return;           /* drop oldest? keep newest flow */
     size_t i = (t->qh + t->qn) % TR_WORD_Q;
     snprintf(t->words[i], TR_WLEN, "%s", w);
     t->qn++;
 }
+#endif /* CP_HAVE_WHISPER */
 
 #ifdef CP_HAVE_WHISPER
 /* split transcript on spaces/newlines, strip surrounding whitespace */

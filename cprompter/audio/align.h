@@ -47,7 +47,7 @@ int    cp_align_drift(const cp_align *a);        /* miss streak             */
 const char *cp_align_last_heard(const cp_align *a); /* debug/UI ticker     */
 
 /* helpers exposed for tests */
-int  cp_norm_word(const char *in, char *out, size_t outn); /* lowercase, strip punct/diacritics-ish */
+int  cp_norm_word(const char *in, char *out, size_t outn); /* lowercase, strip punct; returns #chars written */
 int  cp_is_filler(const char *norm);                       /* 1 if hesitation/filler token          */
 int  cp_fuzzy_eq(const char *a, const char *b);            /* 1 if Levenshtein<=1 or prefix>=4      */
 

@@ -65,7 +65,13 @@ int cp_norm_word(const char *in, char *out, size_t outn) {
     size_t j = 0;
     for (const unsigned char *p = (const unsigned char *)in; *p; p++) {
         unsigned char c = *p;
-        if (c == '\'' || c == '`' || c == 0xE2) continue; /* curly quote lead */
+        /* strip ASCII punctuation/quotes */
+        if (ispunct(c) || c == '`') continue;
+        /* strip common UTF-8 junk sequences: curly quotes (U+2018/2019/201C/
+         * 201D), em/en dashes (U+2013/2014), ellipsis (U+2026). These arrive
+         * as E2 80 9x / E2 80 93-94 / E2 80 A6. */
+        if (c == 0xE2 && p[1] == 0x80 &&
+            (p[2] >= 0x91 && p[2] <= 0x99)) { p += 2; continue; }
         if (isalnum(c) || c >= 0x80) {
             if (j + 1 < outn) out[j++] = (char)tolower(c);
         }
@@ -123,23 +129,35 @@ static int lev_le(const char *a, const char *b, int dist) {
 
 int cp_fuzzy_eq(const char *a, const char *b) {
     if (!*a || !*b) return 0;
-    /* long words: shared 4-char prefix counts (ASR truncations) */
+    /* long words: shared 4-char prefix counts (ASR truncations). A genuine
+     * truncation/corruption of one word by the other needs only pure
+     * insertions/deletions — zero substitutions. */
     size_t la = strlen(a), lb = strlen(b);
     size_t m = la < lb ? la : lb;
     if (m >= 4 && !memcmp(a, b, 4) && (la >= 5 || lb >= 5)) {
-        /* prefix match ok if one is near-prefix of other */
         if (lev_le(a, b, 2)) return 1;
     }
     int dl = (int)(la > lb ? la : lb);
     int allowed = dl <= 3 ? 0 : dl <= 6 ? 1 : 2;
-    return lev_le(a, b, allowed);
+    if (lev_le(a, b, allowed)) return 1;
+    /* wide gap + short common side: ASR heard only a prefix/suffix fragment
+     * ("telepromp" for "teleprompter") -> containment wins over edit distance */
+    size_t mn = la < lb ? la : lb, mx = la > lb ? la : lb;
+    if (mn >= 4 && mx - mn >= 3) {
+        const char *shortw = la < lb ? a : b, *longw = la < lb ? b : a;
+        if (strstr(longw, shortw)) return 1;
+    }
+    return 0;
 }
 
-/* try to match `w` against script[i]; returns 1 exact-norm, 1&fuzzy same code */
+/* try to match `w` against script[i]; returns 1 exact-norm, 1&fuzzy same code.
+ * Short words (<=3 chars) require an exact normalized match: fuzzy tolerance
+ * there would let "the" match "teh"-class noise or wrong function words. */
 static int match_at(const cp_align *a, const char *w, size_t i) {
     const char *sw = a->norm + i * AL_NORMSZ;
     if (!*sw) return 0;
     if (!strcmp(w, sw)) return 1;
+    if (strlen(w) <= 3 || strlen(sw) <= 3) return 0;
     return cp_fuzzy_eq(w, sw);
 }
 
@@ -166,27 +184,37 @@ cp_align_result cp_align_feed(cp_align *a, const char *word) {
         return r;
     }
 
-    /* 3) already-delivered re-read/stutter: step back within AL_MAX_BACK */
-    if (a->idx > 0) {
-        size_t lo = a->idx > (size_t)AL_MAX_BACK ? a->idx - AL_MAX_BACK : 0;
-        for (size_t i = a->idx; i-- > lo;) {
-            if (match_at(a, w, i)) {
-                a->idx = i + 1; a->drift = 0;
-                r.matched = 1; r.advanced = (int)a->idx - (int)old;
-                r.script_idx = a->idx; r.drift = a->drift;
-                return r;
+    /* 3) already-delivered re-read/stutter: only consider stepping back if the
+     *    word does NOT also appear ahead in the lookahead window — otherwise a
+     *    repeated function word ("the ... the") means skip-ahead, not stutter. */
+    {
+        int matched_ahead = 0;
+        size_t hi0 = a->idx + AL_MAX_LOOK < nw ? a->idx + AL_MAX_LOOK : nw;
+        for (size_t i = a->idx + 1; i < hi0; i++)
+            if (match_at(a, w, i)) { matched_ahead = 1; break; }
+
+        if (!matched_ahead && a->idx > 0) {           /* pure re-read/stutter */
+            size_t lo = a->idx > (size_t)AL_MAX_BACK ? a->idx - AL_MAX_BACK : 0;
+            for (size_t i = a->idx; i-- > lo;) {
+                if (match_at(a, w, i)) {
+                    a->idx = i + 1; a->drift = 0;
+                    r.matched = 1; r.advanced = (int)a->idx - (int)old;
+                    r.script_idx = a->idx; r.drift = a->drift;
+                    return r;
+                }
             }
         }
-    }
 
-    /* 4) lookahead skip-ahead */
-    size_t hi = a->idx + AL_MAX_LOOK < nw ? a->idx + AL_MAX_LOOK : nw;
-    for (size_t i = a->idx + 1; i < hi; i++) {
-        if (match_at(a, w, i)) {
-            a->idx = i + 1; a->drift = 0;
-            r.matched = 1; r.advanced = (int)a->idx - (int)old;
-            r.script_idx = a->idx; r.drift = a->drift;
-            return r;
+        /* 4) lookahead skip-ahead (presenter rushed past words) */
+        if (matched_ahead) {
+            for (size_t i = a->idx + 1; i < hi0; i++) {
+                if (match_at(a, w, i)) {
+                    a->idx = i + 1; a->drift = 0;
+                    r.matched = 1; r.advanced = (int)a->idx - (int)old;
+                    r.script_idx = a->idx; r.drift = a->drift;
+                    return r;
+                }
+            }
         }
     }
 
