@@ -41,6 +41,12 @@ void cp_pacer_init(cp_pacer *p, const cp_script *s, double start_speed_wps) {
     p->track_target = 0;
 }
 
+/* live speed change (M5 coach / director POST /api/speed use this path).
+ * Clamped to the Textream range 0.5..8 words/sec; invalid values ignored. */
+void cp_pacer_set_speed(cp_pacer *p, double wps) {
+    if (wps >= 0.5 && wps <= 8.0) p->speed_wps = wps;
+}
+
 void cp_pacer_tick(cp_pacer *p, double now_sec, double dt) {
     if (dt <= 0) return;
     if (p->paused) { p->t_last = now_sec; return; }

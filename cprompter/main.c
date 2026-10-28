@@ -207,7 +207,8 @@ int main(int argc, char **argv) {
                         cp_pacer_set_speed(&p, p.speed_wps * 1.15); break;
                     case CP_ADVICE_PUSH_NEXT:
                         if ((size_t)pg + 1 < s->np)
-                            cp_pacer_jump(&p, s->pages[pg + 1].w0, 1); break;
+                            cp_pacer_jump(&p, s->pages[pg + 1].w0, 1);
+                        break;
                     case CP_ADVICE_HOLD:
                         cp_pacer_set_paused(&p, 1); break;
                     default: break;

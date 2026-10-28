@@ -137,7 +137,7 @@ float cp_engine_wpm(const cp_engine *e) {
 
 void cp_engine_set_speed(cp_engine *e, double wps) {
     pthread_mutex_lock(&e->mu);
-    if (wps >= 0.5 && wps <= 8.0) e->p->speed_wps = wps;
+    cp_pacer_set_speed(e->p, wps);
     pthread_mutex_unlock(&e->mu);
 }
 
