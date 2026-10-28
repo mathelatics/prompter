@@ -62,3 +62,10 @@ inline float expf_(float v){return std::exp(v);}
 #endif
 
 #endif
+
+// __constant__ memory + symbol copy (host-side typecheck shims)
+#ifndef __constant__
+#define __constant__ static
+#endif
+static inline cudaError_t cudaMemcpyToSymbolStub(void* sym, const void* src, size_t n){ memcpy(sym,src,n); return cudaSuccess; }
+#define cudaMemcpyToSymbol(sym, src, n) cudaMemcpyToSymbolStub(&(sym), (src), (n))
