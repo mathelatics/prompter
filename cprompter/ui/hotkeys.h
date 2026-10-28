@@ -8,7 +8,7 @@ typedef enum {
     CPK_NONE = 0, CPK_QUIT, CPK_PAUSE, CPK_SPEED_UP, CPK_SPEED_DOWN,
     CPK_SCROLL_FWD, CPK_SCROLL_BACK, CPK_PAGE_NEXT, CPK_PAGE_PREV,
     CPK_MODE, CPK_SAVE, CPK_RECAL, CPK_SENS_UP, CPK_SENS_DOWN,
-    CPK_JUMP_HOME, CPK_HELP, CPK_MIRROR, CPK_OVERLAY
+    CPK_JUMP_HOME, CPK_HELP, CPK_MIRROR, CPK_OVERLAY, CPK_RESYNC
 } cp_key_action;
 
 /* pseudo key codes for non-printable keys (UI backends map to these) */

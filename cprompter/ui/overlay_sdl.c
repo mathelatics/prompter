@@ -110,6 +110,8 @@ static void handle_action(view *v, cp_key_action a, double now) {
     case CPK_SENS_UP:   cp_engine_sensitivity(v->e, +0.5); toast(v, now, "sens +"); break;
     case CPK_SENS_DOWN: cp_engine_sensitivity(v->e, -0.5); toast(v, now, "sens -"); break;
     case CPK_JUMP_HOME: cp_engine_jump(v->e, 0, 1); toast(v, now, "restart"); break;
+    case CPK_RESYNC: cp_engine_resync(v->e);
+        toast(v, now, "tracker resynced"); break;
     case CPK_MIRROR: v->mirror = (v->mirror + 1) % 4;
         toast(v, now, "mirror: %s",
               v->mirror==0?"off":v->mirror==1?"horizontal":v->mirror==2?"vertical":"180°"); break;
@@ -181,6 +183,8 @@ int cp_overlay_sdl_run(cp_engine *e, int loop, cp_overlay_style style) {
 
         double now = cp_engine_now(), dt = now - last; last = now;
         if (dt > 0.1) dt = 0.1;
+        /* M2: drain ASR words -> aligner -> pacer before ticking the clock */
+        cp_engine_update_track(v.e);
         /* pacer tick happens here (UI owns the clock) */
         cp_pacer_tick((cp_pacer *)v.p, now, dt);
 
@@ -215,13 +219,15 @@ int cp_overlay_sdl_run(cp_engine *e, int loop, cp_overlay_style style) {
                 x += tw + 12;
             }
             /* status strip: mode | speed | wpm | mic bar | page */
-            char st[128];
-            snprintf(st, sizeof st, "%s  %.1f w/s  %.0f wpm  page %d/%zu%s",
+            char st[160];
+            int dr = cp_engine_drift(e);
+            snprintf(st, sizeof st, "%s  %.1f w/s  %.0f wpm  page %d/%zu%s%s",
                      s->default_mode == CP_MODE_VOICE ? "VOICE" :
                      s->default_mode == CP_MODE_TRACK ? "TRACK" : "CLASSIC",
                      v.p->speed_wps, cp_engine_wpm(e),
                      cp_page_of(s, cur) + 1, s->np,
-                     v.p->paused ? "  [PAUSED]" : "");
+                     v.p->paused ? "  [PAUSED]" : "",
+                     dr >= 8 ? "  [DESYNC: press t]" : "");
             SDL_Color gc = { 150, 150, 150, 255 };
             draw_text(&v, ren, 60, H - 26, st, gc, 1);
             float lvl = cp_engine_level(e);

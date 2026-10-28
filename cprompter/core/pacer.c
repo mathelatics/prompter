@@ -96,8 +96,21 @@ void cp_pacer_feed_vad(cp_pacer *p, int active, double inst_wpm) {
 }
 
 void cp_pacer_feed_align(cp_pacer *p, double aligned_pos) {
-    if (aligned_pos > p->track_target)      /* forward-only for auto track */
+    /* Word-tracking is authoritative: unlike VAD mode we DO allow small
+     * backward moves (stutters/re-reads align.c resolves) but never below
+     * floor(max_delivered)-AL_BACK_CAP so we don't rewind whole paragraphs. */
+    if (aligned_pos >= p->track_target) {          /* forward: always ok   */
         p->track_target = aligned_pos;
+    } else {
+        double lo = p->max_delivered - 6.0;        /* bounded backtrack    */
+        if (aligned_pos > lo && !p->paused) p->track_target = aligned_pos;
+    }
+}
+
+void cp_pacer_resync(cp_pacer *p) {
+    /* "tap to resync" (hotkey): snap pos onto the tracker cursor at once. */
+    if (p->track_target > p->pos) p->pos = p->track_target;
+    clamp(p);
 }
 
 size_t cp_pacer_word_index(const cp_pacer *p) {

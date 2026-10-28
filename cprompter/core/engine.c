@@ -5,6 +5,7 @@
 #include "../audio/audio.h"
 #include "../audio/vad.h"
 #include "../audio/wpm.h"
+#include "../audio/align.h"
 
 #include <pthread.h>
 #include <stdarg.h>
@@ -20,6 +21,8 @@ struct cp_engine {
     cp_audio      *aud;
     cp_vad        *vad;
     cp_wpm        *wpm;
+    cp_track      *track;          /* M2 ASR front-end (may be NULL)     */
+    cp_align      *align;          /* M2 word tracker (may be NULL)      */
     int            audio_live;
     float          sensitivity;
 };
@@ -36,6 +39,7 @@ static void on_pcm(const float *pcm, size_t n, void *user) {
     int sp = cp_vad_push(e->vad, pcm, n);
     cp_wpm_push(e->wpm, pcm, n, sp);
     cp_pacer_feed_vad(e->p, sp, cp_wpm_estimate(e->wpm));
+    if (e->track) cp_track_push_pcm(e->track, pcm, n);  /* M2: feed ASR too */
     pthread_mutex_unlock(&e->mu);
 }
 
@@ -51,7 +55,22 @@ cp_engine *cp_engine_new(cp_script *s, cp_pacer *p,
     e->wpm = cp_wpm_new(CP_AUDIO_RATE);
     cp_vad_set_sensitivity(e->vad, e->sensitivity);
 
-    if (ep && ep->enable_audio) {
+    /* M2: word-tracking front-end (mock stream needs no mic; whisper does) */
+    if (ep && ep->track.backend != CP_TRACK_NONE) {
+        char terr[200] = "";
+        e->track = cp_track_open(&ep->track, terr, sizeof terr);
+        if (!e->track) {
+            if (err) snprintf(err, errn, "track: %s", terr);
+            cp_vad_free(e->vad); cp_wpm_free(e->wpm);
+            pthread_mutex_destroy(&e->mu); free(e);
+            return NULL;
+        }
+        e->align = cp_align_new(s);
+    }
+
+    int need_mic = ep && (ep->enable_audio ||
+               (e->track && ep->track.backend == CP_TRACK_WHISPER));
+    if (need_mic) {
         cp_audio_params ap = { .dev = ep->dev, .frame_ms = 20,
                                .cb = on_pcm, .user = e };
         char aerr[160] = "";
@@ -71,6 +90,8 @@ void cp_engine_free(cp_engine *e) {
     if (!e) return;
     cp_engine_stop(e);
     if (e->aud) cp_audio_close(e->aud);
+    if (e->track) cp_track_close(e->track);
+    if (e->align) cp_align_free(e->align);
     cp_vad_free(e->vad); cp_wpm_free(e->wpm);
     pthread_mutex_destroy(&e->mu);
     free(e);
@@ -137,10 +158,48 @@ void cp_engine_jump(cp_engine *e, size_t wi, int allow_back) {
 
 void cp_engine_cycle_mode(cp_engine *e) {
     pthread_mutex_lock(&e->mu);
-    e->s->default_mode = (e->s->default_mode + 1) % 3;
-    if (e->s->default_mode == CP_MODE_TRACK)   /* M2 not wired yet: skip */
-        e->s->default_mode = CP_MODE_CLASSIC;
+    int has_track = e->track && e->align;
+    int next = (e->s->default_mode + 1) % 3;
+    if (next == CP_MODE_TRACK && !has_track) next = CP_MODE_CLASSIC;
+    e->s->default_mode = next;
     pthread_mutex_unlock(&e->mu);
+}
+
+/* M2: drain ASR words -> aligner -> pacer. UI-thread, once per frame. */
+void cp_engine_update_track(cp_engine *e) {
+    if (!e || !e->track || !e->align) return;
+    const char *words[64];
+    size_t n;
+    pthread_mutex_lock(&e->mu);
+    while ((n = cp_track_poll(e->track, words,
+                              sizeof words / sizeof *words)) > 0) {
+        for (size_t i = 0; i < n; i++)
+            cp_pacer_feed_align(e->p, (double)cp_align_feed(e->align, words[i]).script_idx);
+        if (n < sizeof words / sizeof *words) break;   /* queue drained */
+    }
+    pthread_mutex_unlock(&e->mu);
+}
+
+void cp_engine_resync(cp_engine *e) {
+    if (!e) return;
+    pthread_mutex_lock(&e->mu);
+    cp_pacer_resync(e->p);
+    if (e->align) cp_align_reset(e->align, cp_pacer_word_index(e->p));
+    if (e->track) cp_track_flush(e->track);
+    pthread_mutex_unlock(&e->mu);
+}
+
+int cp_engine_drift(const cp_engine *e) {
+    if (!e || !e->align) return 0;
+    pthread_mutex_lock((pthread_mutex_t *)&e->mu);
+    int d = cp_align_drift(e->align);
+    pthread_mutex_unlock((pthread_mutex_t *)&e->mu);
+    return d;
+}
+
+const char *cp_engine_last_heard(const cp_engine *e) {
+    if (!e || !e->align) return "";
+    return cp_align_last_heard(e->align);
 }
 
 void cp_engine_vad_recalibrate(cp_engine *e) {

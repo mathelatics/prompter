@@ -27,6 +27,7 @@ cp_key_action cpk_lookup(int ch, int ctrl, int alt) {
     case ',':                    return CPK_SENS_DOWN;
     case '.':                    return CPK_SENS_UP;
     case CPK_KEY_HOME: case 'g': return CPK_JUMP_HOME;
+    case 't': case 'T':          return CPK_RESYNC;
     case 'f': case 'F':          return CPK_MIRROR;
     case 'o': case 'O':          return CPK_OVERLAY;
     case '?': case 'h':          return CPK_HELP;
@@ -52,6 +53,7 @@ const char *cpk_name(cp_key_action a) {
     case CPK_JUMP_HOME: return "jump to start";
     case CPK_MIRROR: return "cycle mirror flip";
     case CPK_OVERLAY: return "cycle overlay style";
+    case CPK_RESYNC: return "resync tracker (word tracking)";
     case CPK_HELP: return "help";
     default: return "";
     }
@@ -60,6 +62,6 @@ const char *cpk_name(cp_key_action a) {
 const char *cpk_help(void) {
     return
       "keys: Space pause | +/- speed | arrows|wheel scroll | [ ] page |\n"
-      "      m mode | f mirror | o overlay | s save | r recalibrate |\n"
-      "      , . sensitivity | ? help | q/Esc quit\n";
+      "      m mode | t resync | f mirror | o overlay | s save |\n"
+      "      r recalibrate | , . sensitivity | ? help | q/Esc quit\n";
 }

@@ -33,6 +33,7 @@ void   cp_pacer_jump(cp_pacer *p, double word_idx, int allow_back);
 void   cp_pacer_set_paused(cp_pacer *p, int paused);
 void   cp_pacer_feed_vad(cp_pacer *p, int active, double inst_wpm);
 void   cp_pacer_feed_align(cp_pacer *p, double aligned_pos);
+void   cp_pacer_resync(cp_pacer *p);            /* snap pos to track_target */
 
 /* Queries */
 size_t cp_pacer_word_index(const cp_pacer *p);        /* floor(pos) clamped */

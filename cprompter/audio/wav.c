@@ -2,11 +2,39 @@
  * Feeds the same cp_audio_cb contract as live capture, so vad/wpm/align code
  * is testable with recorded speech without any mic. (~120 lines.) */
 #define _GNU_SOURCE
+#include "wav.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include "audio.h"   /* CP_AUDIO_RATE, cp_resample_i16_to16k */
+
+int cp_wav_write_i16(const char *path, const int16_t *pcm, size_t n, int rate) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+    uint32_t data_bytes = (uint32_t)(n * 2);
+    uint32_t riff = 36 + data_bytes, sr = (uint32_t)rate;
+    uint16_t ch = 1, bits = 16, ba = 2;
+    unsigned char h[44];
+    memcpy(h, "RIFF", 4);
+    h[4] = riff & 0xff; h[5] = riff >> 8 & 0xff; h[6] = riff >> 16 & 0xff; h[7] = riff >> 24;
+    memcpy(h + 8, "WAVEfmt ", 8);
+    h[16] = 16; h[17] = h[18] = h[19] = 0;
+    h[20] = 1; h[21] = 0;                 /* PCM            */
+    h[22] = ch; h[23] = 0;                /* mono           */
+    h[24] = sr & 0xff; h[25] = sr >> 8 & 0xff; h[26] = sr >> 16 & 0xff; h[27] = sr >> 24;
+    uint32_t brate = sr * ba;
+    h[28] = brate & 0xff; h[29] = brate >> 8 & 0xff; h[30] = brate >> 16 & 0xff; h[31] = brate >> 24;
+    h[32] = ba; h[33] = 0;
+    h[34] = bits; h[35] = 0;
+    memcpy(h + 36, "data", 4);
+    h[40] = data_bytes & 0xff; h[41] = data_bytes >> 8 & 0xff;
+    h[42] = data_bytes >> 16 & 0xff; h[43] = data_bytes >> 24;
+    fwrite(h, 1, 44, f);
+    fwrite(pcm, 2, n, f);
+    fclose(f);
+    return 0;
+}
 
 typedef struct {
     int      rate;

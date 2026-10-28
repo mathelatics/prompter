@@ -6,6 +6,7 @@
 
 #include "../core/script.h"
 #include "../core/pacer.h"
+#include "../audio/track.h"
 
 typedef struct cp_engine cp_engine;
 
@@ -13,6 +14,9 @@ typedef struct {
     const char *dev;         /* NULL = default; "null" = silent test   */
     int         enable_audio;/* 0 -> pure clock (classic), no mic      */
     float       sensitivity; /* VAD -2..+2                               */
+    /* M2 word tracking: backend CP_TRACK_NONE disables. Mock stream is
+     * used by tests/demo; whisper requires WHISPER=1 build. */
+    cp_track_params track;
 } cp_engine_params;
 
 cp_engine *cp_engine_new(cp_script *s, cp_pacer *p,
@@ -28,6 +32,9 @@ int               cp_engine_speaking(const cp_engine *e);
 float             cp_engine_level(const cp_engine *e);      /* 0..1 waveform */
 float             cp_engine_wpm(const cp_engine *e);
 double            cp_engine_now(void);                       /* monotonic sec */
+/* M2 trackers (safe with tracking disabled: return 0/NULL) */
+int               cp_engine_drift(const cp_engine *e);      /* miss streak   */
+const char       *cp_engine_last_heard(const cp_engine *e); /* ASR ticker    */
 
 /* live controls */
 void cp_engine_set_speed(cp_engine *e, double wps);
@@ -37,5 +44,9 @@ void cp_engine_jump(cp_engine *e, size_t word_idx, int allow_back);
 void cp_engine_cycle_mode(cp_engine *e);
 void cp_engine_vad_recalibrate(cp_engine *e);
 void cp_engine_sensitivity(cp_engine *e, float delta);
+/* M2: pull recognized words -> aligner -> pacer. Call once per UI frame. */
+void cp_engine_update_track(cp_engine *e);
+/* M2: snap display position onto the tracker cursor (tap-to-resync) */
+void cp_engine_resync(cp_engine *e);
 
 #endif
