@@ -1,0 +1,41 @@
+/* engine — wires pacer + audio + vad + wpm into one runtime object and owns
+ * the interactive loop. Used by main.c for classic/voice modes; M2 will add
+ * cp_engine_feed_asr() for track mode without changing callers. */
+#ifndef CP_ENGINE_H
+#define CP_ENGINE_H
+
+#include "../core/script.h"
+#include "../core/pacer.h"
+
+typedef struct cp_engine cp_engine;
+
+typedef struct {
+    const char *dev;         /* NULL = default; "null" = silent test   */
+    int         enable_audio;/* 0 -> pure clock (classic), no mic      */
+    float       sensitivity; /* VAD -2..+2                               */
+} cp_engine_params;
+
+cp_engine *cp_engine_new(cp_script *s, cp_pacer *p,
+                         const cp_engine_params *ep, char *err, size_t errn);
+void       cp_engine_free(cp_engine *e);
+
+int  cp_engine_start(cp_engine *e);
+void cp_engine_stop(cp_engine *e);
+
+/* shared-state getters for renderers (called from UI thread) */
+const cp_pacer   *cp_engine_pacer(const cp_engine *e);
+int               cp_engine_speaking(const cp_engine *e);
+float             cp_engine_level(const cp_engine *e);      /* 0..1 waveform */
+float             cp_engine_wpm(const cp_engine *e);
+double            cp_engine_now(void);                       /* monotonic sec */
+
+/* live controls */
+void cp_engine_set_speed(cp_engine *e, double wps);
+void cp_engine_toggle_pause(cp_engine *e);
+void cp_engine_scroll(cp_engine *e, double dw);
+void cp_engine_jump(cp_engine *e, size_t word_idx, int allow_back);
+void cp_engine_cycle_mode(cp_engine *e);
+void cp_engine_vad_recalibrate(cp_engine *e);
+void cp_engine_sensitivity(cp_engine *e, float delta);
+
+#endif
